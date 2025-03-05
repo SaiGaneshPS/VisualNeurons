@@ -199,6 +199,8 @@ class SampleDatasetNodeWidget(DataNodeWidget):
     }
     
     def __init__(self, parent=None):
+        # Initialize dataset_combo before calling parent's __init__
+        self.dataset_combo = None
         super().__init__("Sample Dataset", parent)
         
         # Dataset selector layout
@@ -206,8 +208,9 @@ class SampleDatasetNodeWidget(DataNodeWidget):
         dataset_layout.setContentsMargins(0, 0, 0, 5)
         
         self.dataset_label = QLabel("Dataset:")
-        self.dataset_combo = QComboBox()
         
+        # Now create the actual combo box
+        self.dataset_combo = QComboBox()
         self.dataset_combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.dataset_combo.installEventFilter(self)
         
@@ -225,10 +228,10 @@ class SampleDatasetNodeWidget(DataNodeWidget):
         # Insert elements into layout after title
         self.layout.insertLayout(1, dataset_layout)
         self.layout.insertWidget(2, self.load_button)
-
+    
     def eventFilter(self, obj, event):
         """Custom event filter to help with combo box interaction."""
-        if obj == self.dataset_combo:
+        if hasattr(self, 'dataset_combo') and obj == self.dataset_combo:
             if event.type() == event.Type.MouseButtonPress:
                 # Force the combo box to show its popup when clicked
                 self.dataset_combo.showPopup()
@@ -247,10 +250,13 @@ class DataNode(QGraphicsRectItem):
         self.metadata = {}
         self.target_column = None
         
+        # Input/output definitions
+        self.inputs = {}   # Dictionary of input ports and their data types
+        self.outputs = {}  # Dictionary of output ports and their data types
+        
         # Set node style
         self.setPen(QPen(QColor("#1976D2"), 2))
         self.setBrush(QBrush(QColor("#f0f8ff")))
-        
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
@@ -265,9 +271,68 @@ class DataNode(QGraphicsRectItem):
         self.output_label.setFont(QFont("Arial", 8))
         self._update_label_position()
         
+        # Input connectors (will be created as needed)
+        self.input_connectors = {}
+        
         # Widget and proxy
         self.widget = None
         self.proxy = None
+        
+        # Initialize connectors
+        self.setup_connectors()
+    
+    def setup_connectors(self):
+        """Setup input and output connectors based on defined interfaces."""
+        # Setup default output connector (already created)
+        self.outputs["data"] = {
+            "type": "DataFrame",
+            "description": "Output dataset with target column",
+            "connector": self.output_connector
+        }
+        
+        # Create input connectors as needed - for source nodes, this will be empty
+        for input_name, input_spec in self.inputs.items():
+            input_connector = QGraphicsRectItem(0, 0, 20, 10, self)
+            input_connector.setPen(QPen(QColor("#1976D2"), 2))
+            input_connector.setBrush(QBrush(QColor("#dae8fc")))
+            
+            # Position will depend on number of inputs
+            self.input_connectors[input_name] = input_connector
+            input_spec["connector"] = input_connector
+        
+        # Position input connectors
+        self._update_input_connectors_position()
+    
+    def _update_input_connectors_position(self):
+        """Update the position of input connectors."""
+        rect = self.rect()
+        num_inputs = len(self.inputs)
+        
+        if num_inputs == 0:
+            return
+        
+        # Calculate spacing
+        if num_inputs == 1:
+            # Single input, center at top
+            name = list(self.inputs.keys())[0]
+            connector = self.input_connectors[name]
+            connector.setRect(0, 0, 20, 10)
+            connector.setPos(
+                rect.width()/2 - 10,  # Center horizontally
+                -10  # Top of node
+            )
+        else:
+            # Multiple inputs, distribute evenly across top
+            width = rect.width() - 40  # Leave margins
+            step = width / (num_inputs - 1) if num_inputs > 1 else 0
+            
+            for i, name in enumerate(self.inputs.keys()):
+                connector = self.input_connectors[name]
+                connector.setRect(0, 0, 20, 10)
+                connector.setPos(
+                    20 + i * step - 10,  # Distribute horizontally with margins
+                    -10  # Top of node
+                )
     
     def _update_connector_position(self):
         """Update the output connector to center bottom of the node."""
@@ -275,7 +340,7 @@ class DataNode(QGraphicsRectItem):
         self.output_connector.setRect(0, 0, 20, 10)
         self.output_connector.setPos(
             rect.width()/2 - 10,  # Center horizontally
-            rect.height()         # Bottom of node
+            rect.height()  # Bottom of node
         )
         self.output_connector.setPen(QPen(QColor("#1976D2"), 2))
         self.output_connector.setBrush(QBrush(QColor("#dae8fc")))
@@ -314,50 +379,37 @@ class DataNode(QGraphicsRectItem):
         # Update connector and label positions
         self._update_connector_position()
         self._update_label_position()
+        self._update_input_connectors_position()
         
         self.widget = widget
     
-    # Override mouse events to ensure they're passed to the proxy widget
-    def mousePressEvent(self, event):
-        """Handle mouse press events, with special focus on combo boxes."""
-        if self.proxy:
-            # Map the scene position to the proxy widget's coordinate system
-            proxy_pos = self.proxy.mapFromScene(event.scenePos())
-            
-            # Get the widget under the mouse
-            widget = self.proxy.widget()
-            if widget:
-                # Map from proxy coordinates to widget coordinates
-                widget_pos = widget.mapFromParent(proxy_pos)
-                
-                # Check if we're clicking on a combo box
-                child_widget = widget.childAt(widget_pos)
-                if isinstance(child_widget, QComboBox):
-                    # Force the combo box to show its popup
-                    child_widget.showPopup()
-                    event.accept()
-                    return
+    def get_output_data(self, output_name="data"):
+        """Get the output data for the specified output port."""
+        if output_name != "data" or self.data is None:
+            return None
         
-        # Default handling if not handled above
-        super().mousePressEvent(event)
+        return {
+            "data": self.data,
+            "target_column": self.target_column,
+            "metadata": self.metadata
+        }
     
-    def mouseReleaseEvent(self, event):
-        # Pass the event to the proxy widget first
-        if self.proxy and self.proxy.isUnderMouse():
-            proxy_event_pos = self.proxy.mapFromScene(event.scenePos())
-            if self.proxy.contains(proxy_event_pos):
-                self.proxy.mouseReleaseEvent(event)
-                if event.isAccepted():
-                    return
-        
-        super().mouseReleaseEvent(event)
+    def set_input_data(self, input_name, data_package):
+        """Set input data for the specified input port.
+        This should be overridden by subclasses that accept input.
+        """
+        pass
+    
+    def mousePressEvent(self, event):
+        # Standard handling for moving the node
+        super().mousePressEvent(event)
     
     def boundingRect(self):
         """Override boundingRect to include the output connector and label."""
         base_rect = super().boundingRect()
         # Add extra space at the bottom for the connector and label
         return QRectF(
-            base_rect.left(), 
+            base_rect.left(),
             base_rect.top(),
             base_rect.width(),
             base_rect.height() + 25  # Add space for connector + label
@@ -368,6 +420,18 @@ class FileDataNode(DataNode):
     """Node for loading data from CSV/Excel files."""
     
     def __init__(self, x=0, y=0):
+        # Initialize with no inputs - this is a source node
+        self.inputs = {}
+        
+        # Define outputs before parent initialization
+        self.outputs = {
+            "data": {
+                "type": "DataFrame",
+                "description": "DataFrame loaded from file with metadata",
+                "required_columns": []  # No required columns
+            }
+        }
+        
         super().__init__(x, y, 220, 200)
         
         # Create the widget
@@ -429,9 +493,121 @@ class FileDataNode(DataNode):
                 self.update_target_column(last_col)
             
             QMessageBox.information(None, "Success", f"Loaded {os.path.basename(file_path)} successfully")
-            
         except Exception as e:
             QMessageBox.critical(None, "Error", f"Failed to load data: {str(e)}")
+
+
+class SampleDatasetNode(DataNode):
+    """Node for loading sample datasets."""
+    
+    def __init__(self, x=0, y=0):
+        # Initialize with no inputs - this is a source node
+        self.inputs = {}
+        
+        # Define outputs before parent initialization
+        self.outputs = {
+            "data": {
+                "type": "DataFrame",
+                "description": "Sample dataset with target column",
+                "required_columns": []  # No required columns
+            }
+        }
+        
+        super().__init__(x, y, 220, 220)
+        
+        # Create the widget
+        self.widget_content = SampleDatasetNodeWidget()
+        
+        # Connect signals
+        self.widget_content.load_button.clicked.connect(self.load_dataset)
+        self.widget_content.target_column_changed.connect(self.update_target_column)
+        
+        # Setup widget
+        self.setup_widget(self.widget_content)
+    
+    def load_dataset(self):
+        """Load the selected sample dataset."""
+        try:
+            # Get selected dataset name (stored as user data in the combo box)
+            current_index = self.widget_content.dataset_combo.currentIndex()
+            dataset_name = self.widget_content.dataset_combo.itemData(current_index)
+            
+            # Import here to avoid circular imports
+            from sklearn import datasets
+            
+            # Load the dataset based on selection
+            if dataset_name == 'iris':
+                dataset = datasets.load_iris()
+            elif dataset_name == 'digits':
+                dataset = datasets.load_digits()
+            elif dataset_name == 'wine':
+                dataset = datasets.load_wine()
+            elif dataset_name == 'breast_cancer':
+                dataset = datasets.load_breast_cancer()
+            elif dataset_name == 'diabetes':
+                dataset = datasets.load_diabetes()
+            else:
+                raise ValueError(f"Unknown dataset: {dataset_name}")
+            
+            # Convert to pandas DataFrame
+            if hasattr(dataset, 'feature_names'):
+                feature_names = dataset.feature_names
+            else:
+                feature_names = [f'feature_{i}' for i in range(dataset.data.shape[1])]
+            
+            data = pd.DataFrame(dataset.data, columns=feature_names)
+            
+            # Add target column
+            if hasattr(dataset, 'target'):
+                target_name = 'target'
+                data[target_name] = dataset.target
+            
+            # Store data
+            self.data = data
+            
+            # Create metadata
+            self.metadata = {
+                'source_type': 'sample',
+                'name': dataset_name,
+                'rows': len(data),
+                'columns': len(data.columns),
+                'column_names': list(data.columns),
+                'dtypes': {col: str(dtype) for col, dtype in data.dtypes.items()}
+            }
+            
+            # Update widget
+            self.widget_content.update_data_info(data, self.metadata)
+            
+            # Set target column
+            self.target_column = 'target'
+            self.update_target_column('target')
+            
+            # Show success message
+            QMessageBox.information(None, "Success", f"Loaded {dataset_name} dataset successfully")
+            
+            # Save to disk
+            self.save_dataset_to_disk(dataset_name, data)
+            
+        except Exception as e:
+            QMessageBox.critical(None, "Error", f"Failed to load dataset: {str(e)}")
+    
+    def save_dataset_to_disk(self, dataset_name, data):
+        """Save the sample dataset to disk."""
+        try:
+            # Create sample_datasets directory if it doesn't exist
+            sample_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 'sample_datasets')
+            os.makedirs(sample_dir, exist_ok=True)
+            
+            # Save dataset to CSV
+            file_path = os.path.join(sample_dir, f"{dataset_name}.csv")
+            data.to_csv(file_path, index=False)
+            
+            # Update metadata with file path
+            self.metadata['file_path'] = file_path
+            self.metadata['file_name'] = f"{dataset_name}.csv"
+            
+        except Exception as e:
+            print(f"Warning: Could not save dataset to disk: {str(e)}")
 
 
 class SampleDatasetNode(DataNode):
