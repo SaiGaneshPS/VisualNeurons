@@ -107,12 +107,51 @@ class Sidebar(QScrollArea):
     def _create_preprocessing_section(self, layout):
         section = CollapsibleSection("Data Preprocessing")
         
-        # Add items
-        section.add_item(SidebarItem("Feature Selection"))
-        section.add_item(SidebarItem("Missing Values"))
-        section.add_item(SidebarItem("Normalization"))
-        section.add_item(SidebarItem("Encoding"))
-        section.add_item(SidebarItem("Train/Test Split"))
+        # Add items with correct node types
+        feature_selection = SidebarItem("Feature Selection", "feature_selection")
+        feature_selection.clicked.connect(
+            lambda: self.add_node_requested.emit("feature_selection")
+        )
+        
+        missing_values = SidebarItem("Missing Values", "missing_values")
+        missing_values.clicked.connect(
+            lambda: self.add_node_requested.emit("missing_values")
+        )
+        
+        normalization = SidebarItem("Normalization", "normalization")
+        normalization.clicked.connect(
+            lambda: self.add_node_requested.emit("normalization")
+        )
+        
+        encoding = SidebarItem("Encoding", "encoding")
+        encoding.clicked.connect(
+            lambda: self.add_node_requested.emit("encoding")
+        )
+        
+        train_test = SidebarItem("Train/Test Split", "train_test_split")
+        train_test.clicked.connect(
+            lambda: self.add_node_requested.emit("train_test_split")
+        )
+        
+        # Add new items
+        data_type = SidebarItem("Data Type Correction", "data_type")
+        data_type.clicked.connect(
+            lambda: self.add_node_requested.emit("data_type")
+        )
+        
+        dim_reduction = SidebarItem("Dimensionality Reduction", "dim_reduction")
+        dim_reduction.clicked.connect(
+            lambda: self.add_node_requested.emit("dim_reduction")
+        )
+        
+        # Add all items to section
+        section.add_item(data_type)
+        section.add_item(feature_selection)
+        section.add_item(missing_values)
+        section.add_item(normalization)
+        section.add_item(encoding)
+        section.add_item(dim_reduction)
+        section.add_item(train_test)
         
         layout.addWidget(section)
     
@@ -120,12 +159,31 @@ class Sidebar(QScrollArea):
         section = CollapsibleSection("Models")
         
         # Classification models
-        section.add_item(SidebarItem("Linear Regression"))
-        section.add_item(SidebarItem("Logistic Regression"))
-        section.add_item(SidebarItem("Decision Tree"))
-        section.add_item(SidebarItem("Random Forest"))
-        section.add_item(SidebarItem("Support Vector Machine"))
-        section.add_item(SidebarItem("Neural Network"))
+        logistic = SidebarItem("Logistic Regression", "logistic_regression")
+        logistic.clicked.connect(lambda: self.add_node_requested.emit("logistic_regression"))
+        
+        dt = SidebarItem("Decision Tree", "decision_tree")
+        dt.clicked.connect(lambda: self.add_node_requested.emit("decision_tree"))
+        
+        rf = SidebarItem("Random Forest", "random_forest")
+        rf.clicked.connect(lambda: self.add_node_requested.emit("random_forest"))
+        
+        svm = SidebarItem("Support Vector Machine", "svm")
+        svm.clicked.connect(lambda: self.add_node_requested.emit("svm"))
+        
+        nb = SidebarItem("Naive Bayes", "naive_bayes")
+        nb.clicked.connect(lambda: self.add_node_requested.emit("naive_bayes"))
+        
+        knn = SidebarItem("K-Nearest Neighbors", "knn")
+        knn.clicked.connect(lambda: self.add_node_requested.emit("knn"))
+        
+        # Add all items
+        section.add_item(logistic)
+        section.add_item(dt)
+        section.add_item(rf)
+        section.add_item(svm)
+        section.add_item(nb)
+        section.add_item(knn)
         
         layout.addWidget(section)
     

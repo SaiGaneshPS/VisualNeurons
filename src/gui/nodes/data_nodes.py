@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QGraphicsItem, QGraphicsRectItem, QGraphicsTextItem, QGraphicsProxyWidget,
     QSizePolicy
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QRectF, QPointF
+from PyQt6.QtCore import Qt, pyqtSignal, QRectF, QPointF, QObject
 from PyQt6.QtGui import QColor, QPen, QBrush, QFont
 
 class DataNodeWidget(QWidget):
@@ -238,12 +238,22 @@ class SampleDatasetNodeWidget(DataNodeWidget):
                 return True
         return super().eventFilter(obj, event)
 
+class NodeSignals(QObject):
+    positionChanged = pyqtSignal()
+
 class DataNode(QGraphicsRectItem):
     """Base graphical node for data sources."""
     
-    def __init__(self, x=0, y=0, width=220, height=200):
-        super().__init__(0, 0, width, height)  # Create rect at origin
-        self.setPos(x, y)  # Set position separately
+    def __init__(self, x=0, y=0, width=220, height=200, name=None):
+        super().__init__(0, 0, width, height)
+        self.setPos(x, y)
+        
+        # Add node name
+        self.name = name or "unnamed_node"
+        
+        # Create signals object
+        self.signals = NodeSignals()
+        self.positionChanged = self.signals.positionChanged
         
         # Node properties
         self.data = None
@@ -282,26 +292,17 @@ class DataNode(QGraphicsRectItem):
         self.setup_connectors()
     
     def setup_connectors(self):
-        """Setup input and output connectors based on defined interfaces."""
+        """Setup output connector for data source nodes."""
         # Setup default output connector (already created)
+        self.output_connector.is_connector = True  # Add this flag
+        self.output_connector.is_input = False     # Add this flag
+        self.output_connector.is_output = True     # Add this flag
+        
         self.outputs["data"] = {
             "type": "DataFrame",
             "description": "Output dataset with target column",
             "connector": self.output_connector
         }
-        
-        # Create input connectors as needed - for source nodes, this will be empty
-        for input_name, input_spec in self.inputs.items():
-            input_connector = QGraphicsRectItem(0, 0, 20, 10, self)
-            input_connector.setPen(QPen(QColor("#1976D2"), 2))
-            input_connector.setBrush(QBrush(QColor("#dae8fc")))
-            
-            # Position will depend on number of inputs
-            self.input_connectors[input_name] = input_connector
-            input_spec["connector"] = input_connector
-        
-        # Position input connectors
-        self._update_input_connectors_position()
     
     def _update_input_connectors_position(self):
         """Update the position of input connectors."""
@@ -404,6 +405,12 @@ class DataNode(QGraphicsRectItem):
         # Standard handling for moving the node
         super().mousePressEvent(event)
     
+    def mouseMoveEvent(self, event):
+        """Handle node movement."""
+        super().mouseMoveEvent(event)
+        # Emit position changed signal
+        self.positionChanged.emit()
+    
     def boundingRect(self):
         """Override boundingRect to include the output connector and label."""
         base_rect = super().boundingRect()
@@ -419,7 +426,7 @@ class DataNode(QGraphicsRectItem):
 class FileDataNode(DataNode):
     """Node for loading data from CSV/Excel files."""
     
-    def __init__(self, x=0, y=0):
+    def __init__(self, x=0, y=0, name=None):
         # Initialize with no inputs - this is a source node
         self.inputs = {}
         
@@ -432,7 +439,7 @@ class FileDataNode(DataNode):
             }
         }
         
-        super().__init__(x, y, 220, 200)
+        super().__init__(x, y, 220, 200, name)
         
         # Create the widget
         self.widget_content = FileNodeWidget()
@@ -500,7 +507,7 @@ class FileDataNode(DataNode):
 class SampleDatasetNode(DataNode):
     """Node for loading sample datasets."""
     
-    def __init__(self, x=0, y=0):
+    def __init__(self, x=0, y=0, name=None):
         # Initialize with no inputs - this is a source node
         self.inputs = {}
         
@@ -513,7 +520,7 @@ class SampleDatasetNode(DataNode):
             }
         }
         
-        super().__init__(x, y, 220, 220)
+        super().__init__(x, y, 220, 220, name)
         
         # Create the widget
         self.widget_content = SampleDatasetNodeWidget()
@@ -606,105 +613,5 @@ class SampleDatasetNode(DataNode):
             self.metadata['file_path'] = file_path
             self.metadata['file_name'] = f"{dataset_name}.csv"
             
-        except Exception as e:
-            print(f"Warning: Could not save dataset to disk: {str(e)}")
-
-
-class SampleDatasetNode(DataNode):
-    """Node for loading sample datasets."""
-    
-    def __init__(self, x=0, y=0):
-        super().__init__(x, y, 220, 220)
-        
-        # Create the widget
-        self.widget_content = SampleDatasetNodeWidget()
-        
-        # Connect signals
-        self.widget_content.load_button.clicked.connect(self.load_dataset)
-        self.widget_content.target_column_changed.connect(self.update_target_column)
-        
-        # Setup widget
-        self.setup_widget(self.widget_content)
-    
-    def load_dataset(self):
-        """Load the selected sample dataset."""
-        try:
-            # Get selected dataset name (stored as user data in the combo box)
-            current_index = self.widget_content.dataset_combo.currentIndex()
-            dataset_name = self.widget_content.dataset_combo.itemData(current_index)
-            
-            # Import here to avoid circular imports
-            from sklearn import datasets
-            
-            # Load the dataset based on selection
-            if dataset_name == 'iris':
-                dataset = datasets.load_iris()
-            elif dataset_name == 'digits':
-                dataset = datasets.load_digits()
-            elif dataset_name == 'wine':
-                dataset = datasets.load_wine()
-            elif dataset_name == 'breast_cancer':
-                dataset = datasets.load_breast_cancer()
-            elif dataset_name == 'diabetes':
-                dataset = datasets.load_diabetes()
-            else:
-                raise ValueError(f"Unknown dataset: {dataset_name}")
-                
-            # Convert to pandas DataFrame
-            if hasattr(dataset, 'feature_names'):
-                feature_names = dataset.feature_names
-            else:
-                feature_names = [f'feature_{i}' for i in range(dataset.data.shape[1])]
-                
-            data = pd.DataFrame(dataset.data, columns=feature_names)
-            
-            # Add target column
-            if hasattr(dataset, 'target'):
-                target_name = 'target'
-                data[target_name] = dataset.target
-                
-            # Store data
-            self.data = data
-            
-            # Create metadata
-            self.metadata = {
-                'source_type': 'sample',
-                'name': dataset_name,
-                'rows': len(data),
-                'columns': len(data.columns),
-                'column_names': list(data.columns),
-                'dtypes': {col: str(dtype) for col, dtype in data.dtypes.items()}
-            }
-            
-            # Update widget
-            self.widget_content.update_data_info(data, self.metadata)
-            
-            # Set target column
-            self.target_column = 'target'
-            self.update_target_column('target')
-            
-            # Show success message
-            QMessageBox.information(None, "Success", f"Loaded {dataset_name} dataset successfully")
-            
-            # Save to disk (optional)
-            # self.save_dataset_to_disk(dataset_name, data)
-            
-        except Exception as e:
-            QMessageBox.critical(None, "Error", f"Failed to load dataset: {str(e)}")
-    
-    def save_dataset_to_disk(self, dataset_name, data):
-        """Save the sample dataset to disk."""
-        try:
-            # Create sample_datasets directory if it doesn't exist
-            sample_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 'sample_datasets')
-            os.makedirs(sample_dir, exist_ok=True)
-            
-            # Save dataset to CSV
-            file_path = os.path.join(sample_dir, f"{dataset_name}.csv")
-            data.to_csv(file_path, index=False)
-            
-            # Update metadata with file path
-            self.metadata['file_path'] = file_path
-            self.metadata['file_name'] = f"{dataset_name}.csv"
         except Exception as e:
             print(f"Warning: Could not save dataset to disk: {str(e)}")
