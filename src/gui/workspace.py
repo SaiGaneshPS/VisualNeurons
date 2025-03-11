@@ -17,6 +17,9 @@ from .nodes.model_nodes import (
     LogisticRegressionNode, DecisionTreeNode, RandomForestNode,
     SVMNode, NaiveBayesNode, KNNNode
 )
+from .nodes.evaluation_nodes import (
+    MetricsNode, ConfusionMatrixNode, ROCCurveNode
+)
 
 
 class GridSettings:
@@ -355,13 +358,30 @@ class WorkspaceView(QGraphicsView):
         source_node = source_connector.parentItem()
         target_node = target_connector.parentItem()
         
+        # Find the input name for the target connector
+        input_name = None
+        for name, input_info in target_node.inputs.items():
+            if input_info["connector"] == target_connector:
+                input_name = name
+                break
+        
+        # Find the output name for the source connector
+        output_name = None
+        for name, output_info in source_node.outputs.items():
+            if output_info["connector"] == source_connector:
+                output_name = name
+                break
+        
         # Connect the nodes - get output data and set as input
-        output_data = source_node.get_output_data()
-        if output_data:
-            target_node.set_input_data("data", output_data)
-            print(f"Connected nodes with data package: {output_data['metadata'] if 'metadata' in output_data else 'No metadata'}")
+        if input_name and output_name:
+            output_data = source_node.get_output_data(output_name)
+            if output_data:
+                target_node.set_input_data(input_name, output_data)
+                print(f"Connected {source_node.name}.{output_name} to {target_node.name}.{input_name}")
+            else:
+                print(f"Warning: No output data available from {source_node.name}.{output_name}")
         else:
-            print("Warning: No output data available from source node")
+            print("Warning: Could not determine input/output names for connection")
 
     def add_node(self, node_type):
         """Add a new node to the workspace."""
@@ -403,6 +423,12 @@ class WorkspaceView(QGraphicsView):
             node = NaiveBayesNode(view_center.x() - 125, view_center.y() - 100, node_name)
         elif node_type == "knn":
             node = KNNNode(view_center.x() - 125, view_center.y() - 100, node_name)
+        elif node_type == "metrics":
+            node = MetricsNode(view_center.x() - 125, view_center.y() - 100, node_name)
+        elif node_type == "confusion_matrix":
+            node = ConfusionMatrixNode(view_center.x() - 125, view_center.y() - 100, node_name)
+        elif node_type == "roc_curve":
+            node = ROCCurveNode(view_center.x() - 125, view_center.y() - 100, node_name)
 
         if node:
             self.scene.addItem(node)

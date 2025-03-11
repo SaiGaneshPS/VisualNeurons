@@ -16,6 +16,18 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ML Visual App")
         self.setMinimumSize(1200, 800)
         
+        # Set global tooltip style
+        self.setStyleSheet("""
+            QToolTip {
+                background-color: white;
+                color: black;
+                border: 1px solid #1976D2;
+                padding: 4px;
+                border-radius: 2px;
+                font-size: 11px;
+            }
+        """)
+        
         # Create central widget with horizontal layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)

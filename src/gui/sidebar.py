@@ -190,10 +190,24 @@ class Sidebar(QScrollArea):
     def _create_evaluation_section(self, layout):
         section = CollapsibleSection("Evaluation")
         
-        section.add_item(SidebarItem("Metrics"))
-        section.add_item(SidebarItem("Cross Validation"))
-        section.add_item(SidebarItem("Confusion Matrix"))
-        section.add_item(SidebarItem("ROC Curve"))
+        metrics = SidebarItem("Metrics", "metrics")
+        metrics.clicked.connect(
+            lambda: self.add_node_requested.emit("metrics")
+        )
+        
+        confusion_matrix = SidebarItem("Confusion Matrix", "confusion_matrix")
+        confusion_matrix.clicked.connect(
+            lambda: self.add_node_requested.emit("confusion_matrix")
+        )
+        
+        roc_curve = SidebarItem("ROC Curve", "roc_curve")
+        roc_curve.clicked.connect(
+            lambda: self.add_node_requested.emit("roc_curve")
+        )
+        
+        section.add_item(metrics)
+        section.add_item(confusion_matrix)
+        section.add_item(roc_curve)
         
         layout.addWidget(section)
     

@@ -3,12 +3,13 @@ import pandas as pd
 from typing import Dict, Any
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog,
-    QFormLayout, QComboBox, QHBoxLayout, QMessageBox,
+    QFormLayout, QHBoxLayout, QMessageBox,
     QGraphicsItem, QGraphicsRectItem, QGraphicsTextItem, QGraphicsProxyWidget,
-    QSizePolicy
+    QSizePolicy, QSpinBox, QDoubleSpinBox, QScrollArea, QToolTip
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QRectF, QPointF, QObject
 from PyQt6.QtGui import QColor, QPen, QBrush, QFont
+from ..components.combo_box import NavigableComboBox
 
 class DataNodeWidget(QWidget):
     """Widget for data source node."""
@@ -49,12 +50,6 @@ class DataNodeWidget(QWidget):
             QPushButton:hover {
                 background-color: #0d47a1;
             }
-            QComboBox {
-                background-color: white;
-                border: 1px solid #cccccc;
-                padding: 2px;
-                border-radius: 2px;
-            }
         """)
         
         # Main layout
@@ -92,30 +87,16 @@ class DataNodeWidget(QWidget):
         self.layout.addLayout(self.details_layout)
         
         # Target column section
-        self.target_layout = QHBoxLayout()
-        self.target_label = QLabel("Target:")
-        self.target_combo = QComboBox()
-        self.target_combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.target_combo.installEventFilter(self)
+        self.target_combo = NavigableComboBox(
+            label="Target:",
+            items=[]
+        )
         self.target_combo.setEnabled(False)  # Disabled until data is loaded
-        self.target_combo.currentTextChanged.connect(self._on_target_changed)
-        
-        self.target_layout.addWidget(self.target_label)
-        self.target_layout.addWidget(self.target_combo)
-        
-        self.layout.addLayout(self.target_layout)
+        self.target_combo.value_changed.connect(self._on_target_changed)
+        self.layout.addWidget(self.target_combo)
         
         # Add some stretch
         self.layout.addStretch(1)
-    
-    def eventFilter(self, obj, event):
-        """Custom event filter to help with combo box interaction."""
-        if obj == self.target_combo:
-            if event.type() == event.Type.MouseButtonPress:
-                # Force the combo box to show its popup when clicked
-                self.target_combo.showPopup()
-                return True
-        return super().eventFilter(obj, event)
     
     def _on_target_changed(self, column_name):
         """Handle target column selection change."""
@@ -150,21 +131,16 @@ class DataNodeWidget(QWidget):
             self.columns_label.setText(str(len(data.columns)))
             
             # Update target column combo box
-            self.target_combo.blockSignals(True)  # Prevent unwanted signals
             self.target_combo.clear()
-            
-            for column in data.columns:
-                self.target_combo.addItem(str(column))
+            self.target_combo.addItems([str(col) for col in data.columns])
             
             # Enable the combo box now that we have data
             self.target_combo.setEnabled(True)
             
             # Set default target column (last column)
             if len(data.columns) > 0:
-                self.target_combo.setCurrentIndex(len(data.columns) - 1)
+                self.target_combo.setCurrentText(str(data.columns[-1]))
                 self.target_column = str(data.columns[-1])
-            
-            self.target_combo.blockSignals(False)  # Re-enable signals
         else:
             self.rows_label.setText("-")
             self.columns_label.setText("-")
@@ -199,44 +175,34 @@ class SampleDatasetNodeWidget(DataNodeWidget):
     }
     
     def __init__(self, parent=None):
-        # Initialize dataset_combo before calling parent's __init__
-        self.dataset_combo = None
         super().__init__("Sample Dataset", parent)
         
         # Dataset selector layout
         dataset_layout = QHBoxLayout()
         dataset_layout.setContentsMargins(0, 0, 0, 5)
         
-        self.dataset_label = QLabel("Dataset:")
+        # Create dataset combo box
+        self.dataset_combo = NavigableComboBox(
+            label="Dataset:",
+            items=[f"{name.capitalize()}" for name, desc in self.SAMPLE_DATASETS.items()]
+        )
         
-        # Now create the actual combo box
-        self.dataset_combo = QComboBox()
-        self.dataset_combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.dataset_combo.installEventFilter(self)
-        
-        # Add sample datasets to combo box
-        for name, desc in self.SAMPLE_DATASETS.items():
-            self.dataset_combo.addItem(f"{name.capitalize()}", name)
-        
-        dataset_layout.addWidget(self.dataset_label)
-        dataset_layout.addWidget(self.dataset_combo, 1)
+        # Store dataset keys for later use
+        self.dataset_keys = list(self.SAMPLE_DATASETS.keys())
         
         # Load button
         self.load_button = QPushButton("Load Dataset")
         self.load_button.setFixedHeight(30)
         
         # Insert elements into layout after title
-        self.layout.insertLayout(1, dataset_layout)
+        self.layout.insertWidget(1, self.dataset_combo)
         self.layout.insertWidget(2, self.load_button)
     
-    def eventFilter(self, obj, event):
-        """Custom event filter to help with combo box interaction."""
-        if hasattr(self, 'dataset_combo') and obj == self.dataset_combo:
-            if event.type() == event.Type.MouseButtonPress:
-                # Force the combo box to show its popup when clicked
-                self.dataset_combo.showPopup()
-                return True
-        return super().eventFilter(obj, event)
+    def get_selected_dataset(self):
+        """Get the key of the currently selected dataset."""
+        current_text = self.dataset_combo.currentText()
+        index = self.dataset_combo.currentIndex()
+        return self.dataset_keys[index]
 
 class NodeSignals(QObject):
     positionChanged = pyqtSignal()
@@ -261,8 +227,16 @@ class DataNode(QGraphicsRectItem):
         self.target_column = None
         
         # Input/output definitions
-        self.inputs = {}   # Dictionary of input ports and their data types
-        self.outputs = {}  # Dictionary of output ports and their data types
+        if not hasattr(self, 'inputs'):
+            self.inputs = {}
+        if not hasattr(self, 'outputs'):
+            self.outputs = {
+                "data": {
+                    "type": "DataFrame",
+                    "description": "Output dataset",
+                    "connector": None
+                }
+            }
         
         # Set node style
         self.setPen(QPen(QColor("#1976D2"), 2))
@@ -271,40 +245,50 @@ class DataNode(QGraphicsRectItem):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
         
-        # Output connector (positioned at bottom)
-        self.output_connector = QGraphicsRectItem(0, 0, 20, 10, self)
-        self._update_connector_position()
-        
-        # Output label
-        self.output_label = QGraphicsTextItem(self)
-        self.output_label.setPlainText("target")
-        self.output_label.setFont(QFont("Arial", 8))
-        self._update_label_position()
-        
-        # Input connectors (will be created as needed)
+        # Initialize storage for connectors
         self.input_connectors = {}
+        
+        # Create output connector
+        self.output_connector = QGraphicsRectItem(0, 0, 20, 10, self)
+        self.output_connector.setPen(QPen(QColor("#1976D2"), 2))
+        self.output_connector.setBrush(QBrush(QColor("#dae8fc")))
+        self.output_connector.is_connector = True
+        self.output_connector.is_input = False
+        self.output_connector.is_output = True
+        
+        # Create permanent output text
+        self.output_text = QGraphicsTextItem(self)
+        self.output_text.setPlainText("Output: data")
+        self.output_text.setDefaultTextColor(QColor("black"))
+        self.output_text.setFont(QFont("Arial", 8))
+        
+        # Add output connector to outputs dictionary
+        if "data" in self.outputs:
+            self.outputs["data"]["connector"] = self.output_connector
+        
+        # Create output label
+        self.output_label = QGraphicsTextItem(self)
+        self.output_label.setPlainText("output")
+        self.output_label.setFont(QFont("Arial", 8))
         
         # Widget and proxy
         self.widget = None
         self.proxy = None
-        
-        # Initialize connectors
-        self.setup_connectors()
     
-    def setup_connectors(self):
-        """Setup output connector for data source nodes."""
-        # Setup default output connector (already created)
-        self.output_connector.is_connector = True  # Add this flag
-        self.output_connector.is_input = False     # Add this flag
-        self.output_connector.is_output = True     # Add this flag
+    def _create_connector_text(self, text):
+        """Create a styled text item for connectors."""
+        text_item = QGraphicsTextItem(self)
+        text_item.setPlainText(text)
+        text_item.setDefaultTextColor(QColor("black"))
+        font = QFont("Arial", 8)
+        font.setBold(True)
+        text_item.setFont(font)
         
-        self.outputs["data"] = {
-            "type": "DataFrame",
-            "description": "Output dataset with target column",
-            "connector": self.output_connector
-        }
+        # Add white background for better readability
+        text_item.setHtml(f'<div style="background-color: white; padding: 2px 4px; border-radius: 2px;">{text}</div>')
+        return text_item
     
-    def _update_input_connectors_position(self):
+    def _setup_input_connectors(self):
         """Update the position of input connectors."""
         rect = self.rect()
         num_inputs = len(self.inputs)
@@ -322,6 +306,15 @@ class DataNode(QGraphicsRectItem):
                 rect.width()/2 - 10,  # Center horizontally
                 -10  # Top of node
             )
+            
+            # Add permanent text for the connector
+            text = self._create_connector_text(f"Input: {name}")
+            text_width = text.boundingRect().width()
+            text.setPos(
+                rect.width()/2 - text_width/2,  # Center horizontally
+                -35  # Above connector, increased spacing
+            )
+            
         else:
             # Multiple inputs, distribute evenly across top
             width = rect.width() - 40  # Leave margins
@@ -330,9 +323,15 @@ class DataNode(QGraphicsRectItem):
             for i, name in enumerate(self.inputs.keys()):
                 connector = self.input_connectors[name]
                 connector.setRect(0, 0, 20, 10)
-                connector.setPos(
-                    20 + i * step - 10,  # Distribute horizontally with margins
-                    -10  # Top of node
+                x_pos = 20 + i * step - 10
+                connector.setPos(x_pos, -10)  # Top of node
+                
+                # Add permanent text for each connector
+                text = self._create_connector_text(f"Input: {name}")
+                text_width = text.boundingRect().width()
+                text.setPos(
+                    x_pos + 10 - text_width/2,  # Center under connector
+                    -35  # Above connector, increased spacing
                 )
     
     def _update_connector_position(self):
@@ -343,23 +342,19 @@ class DataNode(QGraphicsRectItem):
             rect.width()/2 - 10,  # Center horizontally
             rect.height()  # Bottom of node
         )
-        self.output_connector.setPen(QPen(QColor("#1976D2"), 2))
-        self.output_connector.setBrush(QBrush(QColor("#dae8fc")))
-    
-    def _update_label_position(self):
-        """Update the output label position to be centered under the connector."""
-        rect = self.rect()
-        label_width = self.output_label.boundingRect().width()
-        self.output_label.setPos(
-            rect.width()/2 - label_width/2,
-            rect.height() + 10
+        
+        # Update output text position with new style
+        self.output_text = self._create_connector_text("Output: data")
+        text_width = self.output_text.boundingRect().width()
+        self.output_text.setPos(
+            rect.width()/2 - text_width/2,  # Center horizontally
+            rect.height() + 15  # Below connector
         )
     
     def update_target_column(self, column_name):
         """Update the target column and label."""
         self.target_column = column_name
         self.output_label.setPlainText(str(column_name))
-        self._update_label_position()
     
     def setup_widget(self, widget):
         """Set up the content widget within the node."""
@@ -379,8 +374,6 @@ class DataNode(QGraphicsRectItem):
         
         # Update connector and label positions
         self._update_connector_position()
-        self._update_label_position()
-        self._update_input_connectors_position()
         
         self.widget = widget
     
@@ -537,7 +530,7 @@ class SampleDatasetNode(DataNode):
         try:
             # Get selected dataset name (stored as user data in the combo box)
             current_index = self.widget_content.dataset_combo.currentIndex()
-            dataset_name = self.widget_content.dataset_combo.itemData(current_index)
+            dataset_name = self.widget_content.get_selected_dataset()
             
             # Import here to avoid circular imports
             from sklearn import datasets
@@ -615,3 +608,72 @@ class SampleDatasetNode(DataNode):
             
         except Exception as e:
             print(f"Warning: Could not save dataset to disk: {str(e)}")
+
+class DataLoaderWidget(DataNodeWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.title.setText("Data Loader")
+        
+        # Add load button
+        self.load_button = QPushButton("Load Data")
+        self.load_button.setFixedHeight(32)
+        self.layout.addWidget(self.load_button)
+        
+        # Add target column selection
+        self.target_combo = NavigableComboBox(
+            label="Target:",
+            items=[]
+        )
+        self.target_combo.setEnabled(False)
+        self.layout.addWidget(self.target_combo)
+        
+        # Connect signals
+        self.target_combo.value_changed.connect(self._on_target_changed)
+    
+    def _on_target_changed(self):
+        self.target_changed.emit(self.target_combo.currentText())
+    
+    def update_columns(self, columns):
+        self.target_combo.clear()
+        self.target_combo.addItems(columns)
+        self.target_combo.setEnabled(True)
+
+class DataSplitterWidget(DataNodeWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.title.setText("Data Splitter")
+        
+        # Add parameters form layout
+        params_layout = QFormLayout()
+        params_layout.setSpacing(8)
+        params_layout.setContentsMargins(8, 4, 8, 8)
+        
+        # Test size
+        self.test_size = QDoubleSpinBox()
+        self.test_size.setRange(0.1, 0.5)
+        self.test_size.setValue(0.2)
+        self.test_size.setSingleStep(0.1)
+        self.test_size.setFixedWidth(80)
+        self.test_size.setAlignment(Qt.AlignmentFlag.AlignRight)
+        params_layout.addRow("Test Size:", self.test_size)
+        
+        # Random state
+        self.random_state = QSpinBox()
+        self.random_state.setRange(0, 100)
+        self.random_state.setValue(42)
+        self.random_state.setFixedWidth(80)
+        self.random_state.setAlignment(Qt.AlignmentFlag.AlignRight)
+        params_layout.addRow("Random State:", self.random_state)
+        
+        # Insert parameters layout at the beginning
+        self.layout.insertLayout(1, params_layout)
+        
+        # Connect signals
+        self.test_size.valueChanged.connect(self._on_params_changed)
+        self.random_state.valueChanged.connect(self._on_params_changed)
+    
+    def _on_params_changed(self):
+        self.params_changed.emit({
+            'test_size': self.test_size.value(),
+            'random_state': self.random_state.value()
+        })

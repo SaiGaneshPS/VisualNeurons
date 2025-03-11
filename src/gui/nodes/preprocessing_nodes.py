@@ -3,70 +3,104 @@ import numpy as np
 from typing import List, Dict
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QScrollArea, 
-    QCheckBox, QFrame, QComboBox, QGridLayout,
+    QCheckBox, QFrame, QGridLayout,
     QFormLayout, QHBoxLayout, QGraphicsRectItem, QSpinBox, QPushButton,
     QDialog, QDialogButtonBox, QStyleFactory, QTableWidget, QTableWidgetItem,
-    QHeaderView, QVBoxLayout, QApplication
+    QHeaderView, QVBoxLayout, QApplication, QStyle, QGraphicsTextItem
 )
 
 import PyQt6.QtCore as QtCore
-from PyQt6.QtGui import QPen, QBrush, QColor
+from PyQt6.QtGui import QPen, QBrush, QColor, QFont
 from PyQt6.QtCore import Qt, pyqtSignal
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, Normalizer
 from .data_nodes import DataNode, DataNodeWidget
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
+from ..components.combo_box import NavigableComboBox
 
 class PreprocessingNode(DataNode):
-    """Base class for preprocessing nodes with input connectors."""
+    """Base class for preprocessing nodes."""
     
     def __init__(self, x=0, y=0, width=220, height=200, name=None):
         # Define inputs before calling super().__init__
-        self.inputs = {
-            "data": {
-                "type": "DataFrame",
-                "description": "Input dataset",
-                "required": True
+        if not hasattr(self, 'inputs'):
+            self.inputs = {
+                "data": {
+                    "type": "DataFrame",
+                    "description": "Input dataset",
+                    "required": True,
+                    "connector": None
+                }
             }
-        }
+        
+        # Define default outputs if not already defined by child class
+        if not hasattr(self, 'outputs'):
+            self.outputs = {
+                "data": {
+                    "type": "DataFrame",
+                    "description": "Processed dataset",
+                    "connector": None
+                }
+            }
         
         super().__init__(x, y, width, height, name)
         
-        # Override the styling for preprocessing nodes
-        self.setPen(QPen(QColor("#FB8C00"), 2))  # Orange border
-        self.setBrush(QBrush(QColor("#fff3e0")))  # Light orange background
+        # Set node style
+        self.setPen(QPen(QColor("#1976D2"), 2))
+        self.setBrush(QBrush(QColor("#f0f8ff")))
         
-        # Create and set up the input connector
-        self.input_connector = QGraphicsRectItem(0, 0, 20, 10, self)
-        self.input_connector.setPen(QPen(QColor("#1976D2"), 2))
-        self.input_connector.setBrush(QBrush(QColor("#dae8fc")))
-        
-        # Explicitly set connector flags as direct properties
-        # These flags are critical for the connection logic
-        self.input_connector.is_connector = True  
-        self.input_connector.is_input = True
-        self.input_connector.is_output = False
-        
-        # Position it at the top center
-        rect = self.rect()
-        self.input_connector.setPos(
-            rect.width()/2 - 10,  # Center horizontally
-            -10                   # Top of node
-        )
-        
-        # Make sure this is added to the input_connectors dictionary
-        # This is critical for the connection logic
-        self.input_connectors["data"] = self.input_connector
+        # Create input and output connectors
+        self._setup_input_connectors()
+        self._setup_output_connectors()
         
         # Debug visualization - add a label to make the connector more visible
-        from PyQt6.QtWidgets import QGraphicsTextItem
-        from PyQt6.QtGui import QFont
         text = QGraphicsTextItem(self)
         text.setPlainText("INPUT")
         text.setFont(QFont("Arial", 7))
-        text.setPos(rect.width()/2 - 20, -25)
+        text.setPos(self.rect().width()/2 - 20, -25)
         
         print(f"PreprocessingNode: Created input connector with flags: is_connector={self.input_connector.is_connector}, is_input={self.input_connector.is_input}")
+    
+    def _setup_input_connectors(self):
+        """Set up input connector."""
+        # Create input connector at the top center
+        self.input_connector = QGraphicsRectItem(0, 0, 20, 10, self)
+        self.input_connector.setPos(self.rect().width()/2 - 10, -10)
+        self.input_connector.setPen(QPen(QColor("#1976D2"), 2))
+        self.input_connector.setBrush(QBrush(QColor("#dae8fc")))
+        self.input_connector.is_connector = True
+        self.input_connector.is_input = True
+        self.input_connector.setAcceptHoverEvents(True)
+        self.input_connector.setToolTip("Input: data")
+        
+        # Add to input connectors dictionary
+        self.input_connectors["data"] = self.input_connector
+        self.inputs["data"]["connector"] = self.input_connector
+    
+    def _setup_output_connectors(self):
+        """Set up output connectors. Can be overridden by child classes."""
+        # Only set up default output connector if we're using the default outputs
+        if list(self.outputs.keys()) == ["data"]:
+            # Update the existing output connector from parent class
+            self.output_connector.setPos(self.rect().width()/2 - 10, self.rect().height())
+            self.output_connector.setAcceptHoverEvents(True)
+            self.output_connector.setToolTip("Output: processed data")
+            self.outputs["data"]["connector"] = self.output_connector
+            
+            # Add labels
+            self._add_output_labels()
+    
+    def _add_output_labels(self):
+        """Add labels for each output connector."""
+        rect = self.rect()
+        spacing = rect.width() / 4
+        
+        # Output label
+        self.output_label = QGraphicsTextItem(self)
+        self.output_label.setPlainText("output")
+        self.output_label.setFont(QFont("Arial", 8))
+        label_width = self.output_label.boundingRect().width()
+        self.output_label.setPos(spacing - label_width/2, rect.height() + 10)
     
     def update_input_connector_position(self):
         """Update the position of the input connector."""
@@ -88,40 +122,52 @@ class PreprocessingNodeWidget(DataNodeWidget):
     def __init__(self, title, parent=None):
         super().__init__(title, parent)
         
-        # Remove target column selection as it's inherited from input
-        self.target_layout.removeWidget(self.target_label)
-        self.target_layout.removeWidget(self.target_combo)
-        self.target_label.deleteLater()
-        self.target_combo.deleteLater()
-        self.layout.removeItem(self.target_layout)
+        # Remove target selection from preprocessing nodes
+        if hasattr(self, 'target_combo'):
+            self.target_combo.deleteLater()
+        
+        # Update labels
+        if hasattr(self, 'file_name_label'):
+            self.details_layout.removeRow(0)  # Remove "File:" row
+            self.status_label = QLabel("No data loaded")
+            self.details_layout.insertRow(0, "Status:", self.status_label)
         
         # Update styling for preprocessing nodes
         self.setStyleSheet("""
             QWidget {
-                background-color: #fff3e0;  /* Light orange background */
+                background-color: #fff3e0;
                 border-radius: 5px;
             }
             QLabel {
                 color: #333333;
                 font-size: 9pt;
                 background-color: transparent;
-            }
-            QComboBox {
-                background-color: white;
-                border: 1px solid #cccccc;
                 padding: 2px;
-                border-radius: 2px;
             }
-            QScrollArea {
+            QPushButton {
+                background-color: #FB8C00;
+                color: white;
                 border: none;
-                background-color: transparent;
+                padding: 5px;
+                border-radius: 3px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #F57C00;
+            }
+            QPushButton:pressed {
+                background-color: #EF6C00;
+            }
+            QPushButton:disabled {
+                background-color: #FFE0B2;
             }
             QCheckBox {
-                background-color: transparent;
+                color: #333333;
                 padding: 2px;
             }
             QCheckBox:hover {
-                background-color: rgba(0, 0, 0, 0.05);
+                background-color: #ffe0b2;
+                border-radius: 3px;
             }
         """)
         
@@ -129,51 +175,80 @@ class PreprocessingNodeWidget(DataNodeWidget):
         self.title_label.setStyleSheet("""
             font-weight: bold;
             color: white;
-            background-color: #FB8C00;  /* Orange */
-            padding: 5px;
+            background-color: #FB8C00;
+            padding: 8px;
             border-radius: 3px;
+            margin-bottom: 8px;
         """)
-        
+    
+    def update_data_info(self, data, metadata=None):
+        """Update the data information display."""
+        if data is not None:
+            if metadata and 'name' in metadata:
+                self.status_label.setText(metadata['name'])
+            else:
+                self.status_label.setText("Data loaded")
+            self.rows_label.setText(str(len(data)))
+            self.columns_label.setText(str(len(data.columns)))
+        else:
+            self.status_label.setText("No data loaded")
+            self.rows_label.setText("-")
+            self.columns_label.setText("-")
+
 class FeatureSelectionEditDialog(QDialog):
     """Dialog for selecting features."""
     
     def __init__(self, features, selected_features, parent=None):
-        super().__init__(parent)
+        super().__init__(None)
         self.setWindowTitle("Select Features")
-        self.setMinimumWidth(500)
-        self.setMinimumHeight(400)
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(500)
         
-        # Set proper window flags
-        self.setWindowFlags(
-            Qt.WindowType.Dialog |
-            Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.CustomizeWindowHint |
-            Qt.WindowType.WindowTitleHint |
-            Qt.WindowType.WindowCloseButtonHint
-        )
-        
-        # Center the dialog on the screen
-        if parent:
-            parent_center = parent.mapToGlobal(parent.rect().center())
-            self.move(
-                parent_center.x() - self.width() // 2,
-                parent_center.y() - self.height() // 2
+        # Center on screen
+        self.setGeometry(
+            QStyle.alignedRect(
+                Qt.LayoutDirection.LeftToRight,
+                Qt.AlignmentFlag.AlignCenter,
+                self.size(),
+                QApplication.primaryScreen().availableGeometry(),
             )
+        )
         
         # Main layout
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
         
         # Add select/deselect all buttons
         buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(8)
         select_all = QPushButton("Select All")
         deselect_all = QPushButton("Deselect All")
         select_all.clicked.connect(self._select_all)
         deselect_all.clicked.connect(self._deselect_all)
         buttons_layout.addWidget(select_all)
         buttons_layout.addWidget(deselect_all)
+        buttons_layout.addStretch()
         layout.addLayout(buttons_layout)
+        
+        # Style the buttons
+        for button in [select_all, deselect_all]:
+            button.setStyleSheet("""
+                QPushButton {
+                    background-color: #1976D2;
+                    color: white;
+                    border: none;
+                    padding: 6px 20px;
+                    border-radius: 3px;
+                    min-width: 100px;
+                }
+                QPushButton:hover {
+                    background-color: #1565C0;
+                }
+                QPushButton:pressed {
+                    background-color: #0D47A1;
+                }
+            """)
         
         # Create table
         self.table = QTableWidget()
@@ -183,54 +258,99 @@ class FeatureSelectionEditDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self.table.setAlternatingRowColors(True)
         
+        # Style the table
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                border: 1px solid #dae8fc;
+                gridline-color: #dae8fc;
+            }
+            QTableWidget::item {
+                padding: 8px;
+                color: #333333;
+            }
+            QHeaderView::section {
+                background-color: #1976D2;
+                color: white;
+                padding: 8px;
+                border: none;
+            }
+            QTableWidget::item:alternate {
+                background-color: #f5f5f5;
+            }
+            QCheckBox {
+                padding: 4px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+            QCheckBox::indicator:unchecked {
+                border: 2px solid #1976D2;
+                background-color: white;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:checked {
+                border: 2px solid #1976D2;
+                background-color: #1976D2;
+                border-radius: 3px;
+            }
+        """)
+        
         # Populate table
         self.table.setRowCount(len(features))
         self.checkboxes = {}
         
         for i, feature in enumerate(features):
             # Feature name
-            self.table.setItem(i, 0, QTableWidgetItem(feature))
+            feature_item = QTableWidgetItem(feature)
+            feature_item.setFlags(feature_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(i, 0, feature_item)
+            
             # Checkbox
             checkbox = QCheckBox()
             checkbox.setChecked(feature in selected_features)
             self.table.setCellWidget(i, 1, checkbox)
             self.checkboxes[feature] = checkbox
         
+        # Adjust row heights and column widths
+        self.table.resizeColumnsToContents()
+        self.table.resizeRowsToContents()
+        self.table.setColumnWidth(1, 100)  # Fixed width for checkbox column
+        
         layout.addWidget(self.table)
         
-        # Add buttons
+        # Add dialog buttons
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | 
-            QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        
-        self.setStyleSheet("""
-            QDialog {
-                background-color: white;
-            }
-            QTableWidget {
-                gridline-color: #d0d0d0;
-                selection-background-color: #e0e0e0;
-            }
-            QTableWidget::item {
-                padding: 5px;
-            }
-            QHeaderView::section {
-                background-color: #f0f0f0;
-                padding: 5px;
+        buttons.setStyleSheet("""
+            QPushButton {
+                background-color: #1976D2;
+                color: white;
                 border: none;
-                border-bottom: 1px solid #d0d0d0;
+                padding: 6px 20px;
+                border-radius: 3px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #1565C0;
+            }
+            QPushButton:pressed {
+                background-color: #0D47A1;
             }
         """)
+        layout.addWidget(buttons)
     
     def _select_all(self):
+        """Select all features."""
         for checkbox in self.checkboxes.values():
             checkbox.setChecked(True)
     
     def _deselect_all(self):
+        """Deselect all features."""
         for checkbox in self.checkboxes.values():
             checkbox.setChecked(False)
     
@@ -279,12 +399,15 @@ class FeatureSelectionWidget(PreprocessingNodeWidget):
         )
     
     def show_edit_dialog(self):
-        """Show the edit dialog."""
+        """Show the feature selection edit dialog."""
         dialog = FeatureSelectionEditDialog(
             self.features,
             self.selected_features,
-            self.window()  # Pass the main window as parent
+            None  # Set parent to None to make it an independent window
         )
+        
+        # Make sure dialog is modal
+        dialog.setModal(True)
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.selected_features = dialog.get_selected_features()
@@ -381,114 +504,252 @@ class FeatureSelectionNode(PreprocessingNode):
             }
         return None
 
+class MissingValuesEditDialog(QDialog):
+    """Dialog for configuring missing value handling methods."""
+    
+    def __init__(self, features, dtypes, missing_counts, current_methods, parent=None):
+        super().__init__(None)
+        self.setWindowTitle("Configure Missing Values")
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(500)
+        
+        # Center on screen
+        self.setGeometry(
+            QStyle.alignedRect(
+                Qt.LayoutDirection.LeftToRight,
+                Qt.AlignmentFlag.AlignCenter,
+                self.size(),
+                QApplication.primaryScreen().availableGeometry(),
+            )
+        )
+        
+        # Main layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        
+        # Add select/deselect all buttons
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(8)
+        
+        # Method selection for all
+        self.global_method = NavigableComboBox(
+            label="Global Method:",
+            items=['mean', 'median', 'most_frequent', 'constant']
+        )
+        self.global_method.value_changed.connect(self._apply_global_method)
+        buttons_layout.addWidget(QLabel("Apply to all:"))
+        buttons_layout.addWidget(self.global_method)
+        buttons_layout.addStretch()
+        layout.addLayout(buttons_layout)
+        
+        # Create table
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Feature", "Data Type", "Missing Values", "Method"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.table.setAlternatingRowColors(True)
+        
+        # Style the table
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                border: 1px solid #dae8fc;
+                gridline-color: #dae8fc;
+            }
+            QTableWidget::item {
+                padding: 8px;
+                color: #333333;
+            }
+            QHeaderView::section {
+                background-color: #1976D2;
+                color: white;
+                padding: 8px;
+                border: none;
+            }
+            QTableWidget::item:alternate {
+                background-color: #f5f5f5;
+            }
+            QComboBox {
+                background-color: white;
+                border: 1px solid #dae8fc;
+                border-radius: 3px;
+                padding: 4px;
+                min-width: 120px;
+            }
+        """)
+        
+        # Populate table
+        self.table.setRowCount(len(features))
+        self.method_combos = {}
+        
+        for i, feature in enumerate(features):
+            # Feature name
+            feature_item = QTableWidgetItem(feature)
+            feature_item.setFlags(feature_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(i, 0, feature_item)
+            
+            # Data type
+            dtype_item = QTableWidgetItem(str(dtypes[feature]))
+            dtype_item.setFlags(dtype_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(i, 1, dtype_item)
+            
+            # Missing values count
+            missing_item = QTableWidgetItem(str(missing_counts[feature]))
+            missing_item.setFlags(missing_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            missing_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(i, 2, missing_item)
+            
+            # Method selector
+            method_combo = NavigableComboBox(items=['mean', 'median', 'most_frequent', 'constant'])
+            if feature in current_methods:
+                method_combo.setCurrentText(current_methods[feature])
+            self.method_combos[feature] = method_combo
+            self.table.setCellWidget(i, 3, method_combo)
+        
+        # Adjust column widths
+        self.table.setColumnWidth(1, 100)  # Data type column
+        self.table.setColumnWidth(2, 100)  # Missing values column
+        self.table.setColumnWidth(3, 150)  # Method column
+        
+        layout.addWidget(self.table)
+        
+        # Add dialog buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.setStyleSheet("""
+            QPushButton {
+                background-color: #1976D2;
+                color: white;
+                border: none;
+                padding: 6px 20px;
+                border-radius: 3px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #1565C0;
+            }
+            QPushButton:pressed {
+                background-color: #0D47A1;
+            }
+        """)
+        layout.addWidget(buttons)
+    
+    def _apply_global_method(self, method):
+        """Apply the selected method to all features."""
+        for combo in self.method_combos.values():
+            combo.setCurrentText(method)
+    
+    def get_methods(self):
+        """Get the mapping of features to their selected methods."""
+        return {
+            feature: combo.currentText()
+            for feature, combo in self.method_combos.items()
+        }
+
 class MissingValuesWidget(PreprocessingNodeWidget):
     """Widget for handling missing values."""
     
     methods_changed = pyqtSignal(dict)  # Signal emitted when methods change
     
     def __init__(self, parent=None):
-        super().__init__("Missing Values Handler", parent)
+        super().__init__("Missing Values", parent)
         
-        # Add description
-        self.desc_label = QLabel(
-            "Handle missing values in your dataset using different methods."
+        # Add edit button
+        self.edit_button = QPushButton("Edit Methods")
+        self.edit_button.clicked.connect(self.show_edit_dialog)
+        self.layout.addWidget(self.edit_button)
+        
+        # Store data
+        self.features = []
+        self.dtypes = {}
+        self.missing_counts = {}
+        self.current_methods = {}
+    
+    def update_data_info(self, data, metadata=None):
+        """Update the data information display."""
+        if data is not None:
+            # Update missing value counts
+            self.missing_counts = data.isnull().sum().to_dict()
+            self.dtypes = {col: str(dtype) for col, dtype in data.dtypes.items()}
+            
+            # Update status label
+            total_missing = sum(self.missing_counts.values())
+            if total_missing > 0:
+                self.status_label.setText(f"{total_missing} missing values")
+            else:
+                self.status_label.setText("No missing values")
+            
+            # Update rows and columns
+            self.rows_label.setText(str(len(data)))
+            self.columns_label.setText(str(len(data.columns)))
+            
+            # Enable edit button if there are missing values
+            self.edit_button.setEnabled(total_missing > 0)
+        else:
+            self.status_label.setText("No data loaded")
+            self.rows_label.setText("-")
+            self.columns_label.setText("-")
+            self.edit_button.setEnabled(False)
+    
+    def show_edit_dialog(self):
+        """Show the missing values edit dialog."""
+        dialog = MissingValuesEditDialog(
+            self.features,
+            self.dtypes,
+            self.missing_counts,
+            self.current_methods,
+            None  # Set parent to None to make it an independent window
         )
-        self.desc_label.setWordWrap(True)
-        self.desc_label.setStyleSheet("color: #666666; margin-bottom: 10px;")
-        self.layout.addWidget(self.desc_label)
         
-        # Add method selection for all columns
-        global_method_layout = QFormLayout()
-        self.global_method = QComboBox()
-        self.global_method.setFixedWidth(120)
-        self.global_method.addItems(['mean', 'median', 'mode', 'constant'])
-        self.global_method.currentTextChanged.connect(self._on_global_method_changed)
-        global_method_layout.addRow("Apply to all:", self.global_method)
-        self.layout.addLayout(global_method_layout)
+        # Make sure dialog is modal
+        dialog.setModal(True)
         
-        # Create table-like widget for features
-        table_widget = QWidget()
-        table_layout = QGridLayout(table_widget)
-        table_layout.setSpacing(10)
-        
-        # Headers
-        headers = ["Feature", "Missing", "Method"]
-        for i, header in enumerate(headers):
-            label = QLabel(header)
-            label.setStyleSheet("font-weight: bold;")
-            table_layout.addWidget(label, 0, i)
-        
-        # Add scroll area
-        scroll = QScrollArea()
-        scroll.setWidget(table_widget)
-        scroll.setWidgetResizable(True)
-        scroll.setMinimumHeight(150)
-        self.layout.addWidget(scroll)
-        
-        self.table_layout = table_layout
-        self.method_selectors = {}
-    
-    def update_features(self, features: List[str], missing_counts: Dict[str, int]):
-        """Update the feature list with missing value counts."""
-        # Clear existing widgets
-        for i in reversed(range(self.table_layout.count())): 
-            self.table_layout.itemAt(i).widget().deleteLater()
-        self.method_selectors.clear()
-        
-        # Add row for each feature
-        for i, feature in enumerate(features, 1):
-            # Feature name
-            self.table_layout.addWidget(QLabel(feature), i, 0)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.current_methods = dialog.get_methods()
+            self.methods_changed.emit(self.current_methods)
             
-            # Missing count
-            count = missing_counts.get(feature, 0)
-            self.table_layout.addWidget(QLabel(str(count)), i, 1)
-            
-            # Method selector
-            method_combo = QComboBox()
-            method_combo.addItems(['mean', 'median', 'mode', 'constant'])
-            method_combo.currentTextChanged.connect(
-                lambda method, f=feature: self._on_method_changed(f, method)
-            )
-            self.table_layout.addWidget(method_combo, i, 2)
-            self.method_selectors[feature] = method_combo
+            # Update status label with method count
+            method_count = len(set(self.current_methods.values()))
+            self.status_label.setText(f"Using {method_count} different method(s)")
     
-    def _on_method_changed(self, feature: str, method: str):
-        """Emit signal with current methods for all features."""
-        methods = {
-            f: selector.currentText()
-            for f, selector in self.method_selectors.items()
-        }
-        self.methods_changed.emit(methods)
-    
-    def _on_global_method_changed(self, method):
-        """Apply selected method to all features."""
-        for combo in self.method_selectors.values():
-            combo.setCurrentText(method)
+    def update_features(self, features: List[str], data: pd.DataFrame):
+        """Update the feature list and their information."""
+        self.features = features
+        self.missing_counts = data[features].isnull().sum().to_dict()
+        self.dtypes = {col: str(data[col].dtype) for col in features}
+        
+        # Initialize methods if not set
+        for feature in features:
+            if feature not in self.current_methods:
+                self.current_methods[feature] = 'mean'
+        
+        # Update status
+        total_missing = sum(self.missing_counts.values())
+        if total_missing > 0:
+            self.status_label.setText(f"{total_missing} missing values")
+        else:
+            self.status_label.setText("No missing values")
+        self.edit_button.setEnabled(total_missing > 0)
 
 class MissingValuesNode(PreprocessingNode):
     """Node for handling missing values."""
     
     def __init__(self, x=0, y=0, name=None):
-        
-        self.outputs = {
-            "data": {
-                "type": "DataFrame",
-                "description": "Dataset with handled missing values",
-                "required_columns": []
-            }
-        }
-        
-        super().__init__(x, y, 220, 300, name)
+        super().__init__(x, y, 220, 200, name)
         
         # Create widget
         self.widget_content = MissingValuesWidget()
         self.widget_content.methods_changed.connect(self._on_methods_changed)
-        
-        # Setup widget
         self.setup_widget(self.widget_content)
         
-        # Initialize
+        # Initialize methods
         self.imputation_methods = {}
         self.processed_data = None
     
@@ -499,15 +760,11 @@ class MissingValuesNode(PreprocessingNode):
             self.target_column = data_package["target_column"]
             self.metadata = data_package["metadata"]
             
-            # Get missing value counts for each feature
+            # Update widget with data info
             features = [col for col in self.data.columns if col != self.target_column]
-            missing_counts = self.data[features].isnull().sum().to_dict()
+            self.widget_content.update_features(features, self.data)
             
-            # Update widget
-            self.widget_content.update_features(features, missing_counts)
-            
-            # Initialize methods
-            self.imputation_methods = {f: 'mean' for f in features}
+            # Process data with current methods
             self._process_data()
     
     def _on_methods_changed(self, methods: Dict[str, str]):
@@ -531,7 +788,7 @@ class MissingValuesNode(PreprocessingNode):
                         value = self.processed_data[feature].mean()
                     elif method == 'median':
                         value = self.processed_data[feature].median()
-                    elif method == 'mode':
+                    elif method == 'most_frequent':
                         value = self.processed_data[feature].mode()[0]
                     else:  # constant
                         value = 0
@@ -574,91 +831,41 @@ class NormalizationWidget(PreprocessingNodeWidget):
     def __init__(self, parent=None):
         super().__init__("Normalization", parent)
         
-        # Add description label
-        self.desc_label = QLabel(
-            "Select a normalization method to scale your features:"
+        # Create content layout with proper spacing
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(8, 4, 8, 8)
+        content_layout.setSpacing(8)
+        
+        # Method selector
+        self.method_combo = NavigableComboBox(
+            label="Method:",
+            items=['standard', 'minmax', 'robust', 'normalizer']
         )
-        self.desc_label.setWordWrap(True)
-        self.desc_label.setStyleSheet("color: #666666; margin-bottom: 10px;")
-        self.layout.insertWidget(1, self.desc_label)
+        content_layout.addWidget(self.method_combo)
         
-        # Normalization method selector
-        form_layout = QFormLayout()
+        # Add data info section
+        info_layout = QFormLayout()
+        info_layout.setSpacing(4)
+        info_layout.setContentsMargins(8, 8, 8, 4)
         
-        self.method_combo = QComboBox()
-        self.method_combo.addItems([
-            'StandardScaler',
-            'MinMaxScaler',
-            'RobustScaler',
-            'Normalizer'
-        ])
+        self.file_label = QLabel("No file loaded")
+        self.rows_label = QLabel("-")
+        self.columns_label = QLabel("-")
         
-        # Add tooltips for each method
-        self.method_combo.setItemData(
-            0,  # StandardScaler
-            "Standardize features by removing the mean and scaling to unit variance",
-            Qt.ItemDataRole.ToolTipRole
-        )
-        self.method_combo.setItemData(
-            1,  # MinMaxScaler
-            "Scale features to a given range (default [0, 1])",
-            Qt.ItemDataRole.ToolTipRole
-        )
-        self.method_combo.setItemData(
-            2,  # RobustScaler
-            "Scale features using statistics that are robust to outliers",
-            Qt.ItemDataRole.ToolTipRole
-        )
-        self.method_combo.setItemData(
-            3,  # Normalizer
-            "Scale samples individually to unit norm",
-            Qt.ItemDataRole.ToolTipRole
-        )
+        info_layout.addRow("File:", self.file_label)
+        info_layout.addRow("Rows:", self.rows_label)
+        info_layout.addRow("Columns:", self.columns_label)
         
-        self.method_combo.currentTextChanged.connect(self._on_method_changed)
-        form_layout.addRow("Method:", self.method_combo)
+        content_layout.addLayout(info_layout)
         
-        # Add method description
-        self.method_desc = QLabel()
-        self.method_desc.setWordWrap(True)
-        self.method_desc.setStyleSheet("color: #666666; font-style: italic;")
-        form_layout.addRow("", self.method_desc)
+        # Add content layout to main layout
+        self.layout.insertLayout(1, content_layout)
         
-        self.layout.insertLayout(2, form_layout)
+        # Connect signals
+        self.method_combo.value_changed.connect(self.method_changed.emit)
         
-        # Initialize description
-        self._update_method_description(self.method_combo.currentText())
-    
-    def _on_method_changed(self, method: str):
-        """Handle method change and update description."""
-        self._update_method_description(method)
-        self.method_changed.emit(method)
-    
-    def _update_method_description(self, method: str):
-        """Update the description text based on selected method."""
-        descriptions = {
-            'StandardScaler': """
-                Standardizes features by removing the mean and scaling to unit variance.
-                The standard score of a sample x is calculated as: z = (x - u) / s
-                where u is the mean and s is the standard deviation.
-            """,
-            'MinMaxScaler': """
-                Transforms features by scaling each feature to a given range (default [0, 1]).
-                The transformation is given by: X_scaled = (X - X_min) / (X_max - X_min)
-            """,
-            'RobustScaler': """
-                Scales features using statistics that are robust to outliers.
-                Uses the interquartile range to scale the data, making it robust to outliers.
-            """,
-            'Normalizer': """
-                Scales samples individually to unit norm (vector length).
-                Each sample is scaled independently of other samples.
-            """
-        }
-        
-        # Clean up the description text
-        desc = descriptions[method].strip().replace('\n', ' ').replace('    ', '')
-        self.method_desc.setText(desc)
+        # Set fixed height
+        self.setFixedHeight(200)
 
 class NormalizationNode(PreprocessingNode):
     """Node for data normalization."""
@@ -768,40 +975,38 @@ class EncodingWidget(PreprocessingNodeWidget):
     encoding_changed = pyqtSignal(dict)
     
     def __init__(self, parent=None):
-        super().__init__("Categorical Encoding", parent)
+        super().__init__("Encoding", parent)
         
-        # Add description
-        self.desc_label = QLabel(
-            "Select an encoding method to apply to all categorical columns."
+        # Create content layout with proper spacing
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(8, 4, 8, 8)
+        content_layout.setSpacing(8)
+        
+        # Encoding method selector
+        self.encoding_method = NavigableComboBox(
+            label="Method:",
+            items=['label', 'onehot', 'ordinal']
         )
-        self.desc_label.setWordWrap(True)
-        self.desc_label.setStyleSheet("color: #666666; margin-bottom: 10px;")
-        self.layout.addWidget(self.desc_label)
+        content_layout.addWidget(self.encoding_method)
         
-        # Single encoding method for all columns
-        form_layout = QFormLayout()
-        self.encoding_method = QComboBox()
-        self.encoding_method.setFixedWidth(120)
-        self.encoding_method.addItems(['Label', 'One-Hot', 'Ordinal'])
-        form_layout.addRow("Encoding Method:", self.encoding_method)
-        self.layout.addLayout(form_layout)
+        # Feature methods layout
+        self.feature_methods_layout = QVBoxLayout()
+        self.feature_methods_layout.setSpacing(4)
+        self.feature_methods = {}
         
-        # Display columns to be encoded
-        self.features_list = QLabel()
-        self.features_list.setWordWrap(True)
-        self.layout.addWidget(self.features_list)
+        # Add layouts to main layout
+        content_layout.addLayout(self.feature_methods_layout)
+        self.layout.insertLayout(1, content_layout)
         
-        self.encoding_method.currentTextChanged.connect(self._on_encoding_changed)
-    
-    def update_features(self, features: List[str]):
-        """Update the list of features to be encoded."""
-        self.features = features
-        self.features_list.setText(f"Features to encode: {', '.join(features)}")
-        self._on_encoding_changed(self.encoding_method.currentText())
-    
-    def _on_encoding_changed(self, method: str):
-        """Emit the same encoding method for all features."""
-        self.encoding_changed.emit({f: method for f in self.features})
+        # Connect signals
+        self.encoding_method.value_changed.connect(self.encoding_changed.emit)
+        
+        # Set fixed height
+        self.setFixedHeight(200)
+
+    def update_features(self, features: List[str], data: pd.DataFrame = None):
+        """Update the feature list."""
+        pass  # We don't need to implement this for now, but it needs to exist
 
 class EncodingNode(PreprocessingNode):
     """Node for encoding categorical variables."""
@@ -908,73 +1113,143 @@ class EncodingNode(PreprocessingNode):
         return None
 
 class TrainTestSplitWidget(PreprocessingNodeWidget):
-    # Add signal definition at class level
-    split_changed = pyqtSignal(dict)  # Add this line
+    """Widget for train/test/validation split."""
+    
+    split_changed = pyqtSignal(dict)
     
     def __init__(self, parent=None):
         super().__init__("Train/Test Split", parent)
         
+        # Main form layout
         form_layout = QFormLayout()
         form_layout.setContentsMargins(8, 8, 8, 8)
-        form_layout.setSpacing(10)
+        form_layout.setSpacing(8)
         
-        # Train size spinner with better layout
+        # Train size spinner
         train_layout = QHBoxLayout()
         self.train_spin = QSpinBox()
         self.train_spin.setRange(1, 98)
         self.train_spin.setValue(70)
         self.train_spin.setSuffix("%")
-        self.train_spin.setFixedWidth(80)
+        self.train_spin.setFixedWidth(70)
         self.train_spin.setButtonSymbols(QSpinBox.ButtonSymbols.UpDownArrows)
         self.train_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
         train_layout.addWidget(self.train_spin)
-        train_layout.addStretch()
         
-        # Test size slider/spinbox
+        # Test size spinner
         test_layout = QHBoxLayout()
         self.test_spin = QSpinBox()
         self.test_spin.setRange(1, 98)
         self.test_spin.setValue(20)
         self.test_spin.setSuffix("%")
-        self.test_spin.setFixedWidth(80)
+        self.test_spin.setFixedWidth(70)
         self.test_spin.setButtonSymbols(QSpinBox.ButtonSymbols.UpDownArrows)
         self.test_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
         test_layout.addWidget(self.test_spin)
-        test_layout.addStretch()
         
-        # Validation size slider/spinbox
+        # Validation size spinner
         val_layout = QHBoxLayout()
         self.val_spin = QSpinBox()
         self.val_spin.setRange(0, 98)
         self.val_spin.setValue(10)
         self.val_spin.setSuffix("%")
-        self.val_spin.setFixedWidth(80)
+        self.val_spin.setFixedWidth(70)
         self.val_spin.setButtonSymbols(QSpinBox.ButtonSymbols.UpDownArrows)
         self.val_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
         val_layout.addWidget(self.val_spin)
-        val_layout.addStretch()
         
         # Add spinboxes to form
-        form_layout.addRow("Train Size:", train_layout)
-        form_layout.addRow("Test Size:", test_layout)
-        form_layout.addRow("Validation Size:", val_layout)
+        form_layout.addRow("Train:", train_layout)
+        form_layout.addRow("Test:", test_layout)
+        form_layout.addRow("Validation:", val_layout)
         
         # Add info labels
         self.train_count = QLabel("-")
         self.test_count = QLabel("-")
         self.val_count = QLabel("-")
         
+        # Style the labels
+        for label in [self.train_count, self.test_count, self.val_count]:
+            label.setStyleSheet("color: #FB8C00; font-weight: bold;")
+        
         form_layout.addRow("Train Samples:", self.train_count)
         form_layout.addRow("Test Samples:", self.test_count)
-        form_layout.addRow("Validation Samples:", self.val_count)
+        form_layout.addRow("Val. Samples:", self.val_count)
         
         # Random seed
+        seed_layout = QHBoxLayout()
         self.seed_spin = QSpinBox()
         self.seed_spin.setRange(0, 9999)
         self.seed_spin.setValue(42)
-        form_layout.addRow("Random Seed:", self.seed_spin)
+        self.seed_spin.setFixedWidth(70)
+        self.seed_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
+        seed_layout.addWidget(self.seed_spin)
+        form_layout.addRow("Seed:", seed_layout)
         
+        # Add form layout to main layout
         self.layout.addLayout(form_layout)
+        
+        # Set fixed height
+        self.setFixedHeight(350)
+        
+        # Style the widget
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #fff3e0;
+                border-radius: 5px;
+            }
+            QLabel {
+                color: #333333;
+                font-size: 9pt;
+                background-color: transparent;
+            }
+            QSpinBox {
+                background-color: white;
+                border: 1px solid #FB8C00;
+                padding: 2px;
+                color: #333333;
+                min-height: 20px;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                border: none;
+                background: #FFE0B2;
+                width: 16px;
+                border-left: 1px solid #FB8C00;
+            }
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+                background: #FFCC80;
+            }
+            QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
+                background: #FB8C00;
+            }
+            QSpinBox::up-arrow {
+                image: url(resources/icons/up_arrow.png);
+                width: 10px;
+                height: 10px;
+            }
+            QSpinBox::down-arrow {
+                image: url(resources/icons/down_arrow.png);
+                width: 10px;
+                height: 10px;
+            }
+            QSpinBox[readOnly="true"] {
+                background-color: #F5F5F5;
+                border: 1px solid #BDBDBD;
+            }
+        """)
+        
+        # Style the spinboxes individually for better visibility
+        for spin in [self.train_spin, self.test_spin, self.val_spin, self.seed_spin]:
+            spin.setStyleSheet("""
+                QSpinBox {
+                    background-color: white;
+                    border: 2px solid #FB8C00;
+                    border-radius: 4px;
+                    padding: 2px 4px;
+                    color: #333333;
+                    font-weight: bold;
+                }
+            """)
         
         # Connect signals
         self.train_spin.valueChanged.connect(self._on_split_changed)
@@ -984,7 +1259,7 @@ class TrainTestSplitWidget(PreprocessingNodeWidget):
     
     def _on_split_changed(self):
         """Handle split ratio changes."""
-        with QtCore.QSignalBlocker(self.val_spin):  # Prevent signal feedback loops
+        with QtCore.QSignalBlocker(self.val_spin):
             total = self.train_spin.value() + self.test_spin.value()
             self.val_spin.setValue(100 - total)
         
@@ -1006,99 +1281,173 @@ class TrainTestSplitWidget(PreprocessingNodeWidget):
         self.val_count.setText(str(val_count))
 
 class TrainTestSplitNode(PreprocessingNode):
-    """Node for splitting data into train/test/validation sets."""
+    """Node for displaying train/test/validation split."""
     
     def __init__(self, x=0, y=0, name=None):
+        # Define outputs before parent initialization
         self.outputs = {
             "train": {
                 "type": "DataFrame",
-                "description": "Training dataset"
-            },
-            "test": {
-                "type": "DataFrame",
-                "description": "Testing dataset"
+                "description": "Training dataset",
+                "connector": None
             },
             "validation": {
                 "type": "DataFrame",
-                "description": "Validation dataset"
+                "description": "Validation dataset",
+                "connector": None
+            },
+            "test": {
+                "type": "DataFrame",
+                "description": "Test dataset",
+                "connector": None
             }
         }
         
-        super().__init__(x, y, 220, 300, name)
+        super().__init__(x=x, y=y, width=220, height=350, name=name)
         
         # Create widget
         self.widget_content = TrainTestSplitWidget()
         self.widget_content.split_changed.connect(self._on_split_changed)
-        
-        # Setup widget
         self.setup_widget(self.widget_content)
         
-        # Initialize
+        # Initialize split ratios
         self.split_ratios = {
             'train_size': 0.7,
             'test_size': 0.2,
             'val_size': 0.1,
             'random_state': 42
         }
+        
+        # Create output connectors
+        self._setup_output_connectors()
+    
+    def _setup_output_connectors(self):
+        """Set up output connectors for train, validation, and test data."""
+        rect = self.rect()
+        spacing = rect.width() / 4  # Divide width into 4 parts for even spacing
+        
+        # Training data connector (left)
+        self.train_out = QGraphicsRectItem(0, 0, 20, 10, self)
+        self.train_out.setPos(spacing - 10, rect.height())
+        self.train_out.setPen(QPen(QColor("#1976D2"), 2))
+        self.train_out.setBrush(QBrush(QColor("#dae8fc")))
+        self.train_out.is_connector = True
+        self.train_out.is_output = True
+        
+        # Add text for train output
+        self.train_text = self._create_connector_text("Output: train")
+        text_width = self.train_text.boundingRect().width()
+        self.train_text.setPos(
+            spacing - text_width/2,
+            rect.height() + 15
+        )
+        
+        # Validation data connector (middle)
+        self.val_out = QGraphicsRectItem(0, 0, 20, 10, self)
+        self.val_out.setPos(2 * spacing - 10, rect.height())
+        self.val_out.setPen(QPen(QColor("#1976D2"), 2))
+        self.val_out.setBrush(QBrush(QColor("#dae8fc")))
+        self.val_out.is_connector = True
+        self.val_out.is_output = True
+        
+        # Add text for validation output
+        self.val_text = self._create_connector_text("Output: valid")
+        text_width = self.val_text.boundingRect().width()
+        self.val_text.setPos(
+            2 * spacing - text_width/2,
+            rect.height() + 15
+        )
+        
+        # Test data connector (right)
+        self.test_out = QGraphicsRectItem(0, 0, 20, 10, self)
+        self.test_out.setPos(3 * spacing - 10, rect.height())
+        self.test_out.setPen(QPen(QColor("#1976D2"), 2))
+        self.test_out.setBrush(QBrush(QColor("#dae8fc")))
+        self.test_out.is_connector = True
+        self.test_out.is_output = True
+        
+        # Add text for test output
+        self.test_text = self._create_connector_text("Output: test")
+        text_width = self.test_text.boundingRect().width()
+        self.test_text.setPos(
+            3 * spacing - text_width/2,
+            rect.height() + 15
+        )
+        
+        # Add to outputs dictionary
+        self.outputs["train"]["connector"] = self.train_out
+        self.outputs["validation"]["connector"] = self.val_out
+        self.outputs["test"]["connector"] = self.test_out
     
     def _on_split_changed(self, ratios: dict):
-        """Handle split ratio changes."""
+        """Handle changes to split ratios."""
         self.split_ratios = ratios
         self._process_data()
     
     def set_input_data(self, input_name: str, data_package: dict):
-        """Process input data."""
-        if input_name == "data" and data_package:
-            self.data = data_package["data"]
-            self.target_column = data_package["target_column"]
-            self.metadata = data_package["metadata"]
-            
-            # Update sample counts in widget
+        """Handle input data."""
+        if not data_package or "data" not in data_package:
+            return
+        
+        self.data = data_package["data"]
+        self.target_column = data_package.get("target_column")
+        self.metadata = data_package.get("metadata", {})
+        
+        # Update widget with total samples
+        if self.data is not None:
             self.widget_content.update_counts(len(self.data), self.split_ratios)
-            
-            self._process_data()
+        
+        self._process_data()
     
     def _process_data(self):
-        """Split the data into train/test/validation sets."""
+        """Process the input data and create train/validation/test splits."""
         if self.data is None:
             return
         
         try:
             from sklearn.model_selection import train_test_split
+            import numpy as np
             
-            # First split: separate validation set
-            train_test_size = 1 - self.split_ratios['val_size']
-            if train_test_size < 1:
-                temp_data, self.val_data = train_test_split(
-                    self.data,
-                    train_size=train_test_size,
-                    random_state=self.split_ratios['random_state']
-                )
-            else:
-                temp_data = self.data
-                self.val_data = pd.DataFrame(columns=self.data.columns)
+            # Calculate absolute sizes
+            total_samples = len(self.data)
+            train_size = int(total_samples * self.split_ratios['train_size'])
+            val_size = int(total_samples * self.split_ratios['val_size'])
+            test_size = total_samples - train_size - val_size
             
-            # Second split: separate train and test
-            train_ratio = self.split_ratios['train_size'] / train_test_size
-            self.train_data, self.test_data = train_test_split(
-                temp_data,
-                train_size=train_ratio,
+            # First split: separate test set
+            train_val_data, test_data = train_test_split(
+                self.data,
+                test_size=test_size,
                 random_state=self.split_ratios['random_state']
             )
             
-            # Update widget info
-            self.widget_content.update_data_info(
-                self.data,
-                {
-                    'name': 'Split Data',
-                    'train_samples': len(self.train_data),
-                    'test_samples': len(self.test_data),
-                    'val_samples': len(self.val_data)
-                }
-            )
+            # Second split: separate validation set from training set
+            if val_size > 0:
+                val_fraction = val_size / (train_size + val_size)
+                train_data, val_data = train_test_split(
+                    train_val_data,
+                    test_size=val_fraction,
+                    random_state=self.split_ratios['random_state']
+                )
+            else:
+                train_data = train_val_data
+                val_data = None
+            
+            # Update widget with actual counts
+            actual_splits = {
+                'train_size': len(train_data) / total_samples,
+                'val_size': len(val_data) / total_samples if val_data is not None else 0,
+                'test_size': len(test_data) / total_samples
+            }
+            self.widget_content.update_counts(total_samples, actual_splits)
+            
+            # Store splits
+            self.train_data = train_data
+            self.val_data = val_data
+            self.test_data = test_data
             
         except Exception as e:
-            print(f"Error in train/test split: {str(e)}")
+            print(f"Error in data splitting: {str(e)}")
     
     def get_output_data(self, output_name="train"):
         """Get the output data for the specified split."""
@@ -1106,19 +1455,31 @@ class TrainTestSplitNode(PreprocessingNode):
             return {
                 "data": self.train_data,
                 "target_column": self.target_column,
-                "metadata": {**self.metadata, "split": "train"}
-            }
-        elif output_name == "test" and hasattr(self, 'test_data'):
-            return {
-                "data": self.test_data,
-                "target_column": self.target_column,
-                "metadata": {**self.metadata, "split": "test"}
+                "metadata": {
+                    **self.metadata,
+                    "split": "train",
+                    "split_ratios": self.split_ratios
+                }
             }
         elif output_name == "validation" and hasattr(self, 'val_data'):
             return {
                 "data": self.val_data,
                 "target_column": self.target_column,
-                "metadata": {**self.metadata, "split": "validation"}
+                "metadata": {
+                    **self.metadata,
+                    "split": "validation",
+                    "split_ratios": self.split_ratios
+                }
+            }
+        elif output_name == "test" and hasattr(self, 'test_data'):
+            return {
+                "data": self.test_data,
+                "target_column": self.target_column,
+                "metadata": {
+                    **self.metadata,
+                    "split": "test",
+                    "split_ratios": self.split_ratios
+                }
             }
         return None
 
@@ -1126,90 +1487,112 @@ class DataTypeEditDialog(QDialog):
     """Dialog for editing data types."""
     
     def __init__(self, features, current_types, available_types, parent=None):
-        super().__init__(parent)
+        super().__init__(None)
         self.setWindowTitle("Edit Data Types")
         self.setMinimumWidth(500)
         self.setMinimumHeight(400)
         
-        # Set proper window flags
-        self.setWindowFlags(
-            Qt.WindowType.Dialog |
-            Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.CustomizeWindowHint |
-            Qt.WindowType.WindowTitleHint |
-            Qt.WindowType.WindowCloseButtonHint
-        )
-        
-        # Center the dialog on the screen
-        if parent:
-            parent_center = parent.mapToGlobal(parent.rect().center())
-            self.move(
-                parent_center.x() - self.width() // 2,
-                parent_center.y() - self.height() // 2
-            )
-        
-        # Main layout
+        # Create layout
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
         
         # Create table
         self.table = QTableWidget()
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Feature", "Current Type", "New Type"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.table.setAlternatingRowColors(True)
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Feature", "Type"])
+        self.table.horizontalHeader().setStretchLastSection(True)
         
-        # Populate table
+        # Style the table
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                border: 1px solid #dae8fc;
+            }
+            QTableWidget::item {
+                padding: 8px;
+                color: #333333;
+            }
+            QHeaderView::section {
+                background-color: #1976D2;
+                color: white;
+                padding: 8px;
+                border: none;
+            }
+            QComboBox {
+                background-color: white;
+                border: 1px solid #dae8fc;
+                border-radius: 3px;
+                padding: 4px;
+                min-width: 120px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: url(resources/icons/dropdown.png);
+                width: 12px;
+                height: 12px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: white;
+                border: 1px solid #dae8fc;
+                selection-background-color: #e3f2fd;
+                selection-color: #333333;
+            }
+        """)
+        
+        # Add features and type selectors
         self.table.setRowCount(len(features))
         self.type_combos = {}
         
         for i, feature in enumerate(features):
             # Feature name
-            self.table.setItem(i, 0, QTableWidgetItem(feature))
-            # Current type
-            self.table.setItem(i, 1, QTableWidgetItem(str(current_types.get(feature, 'unknown'))))
-            # New type selector
-            combo = QComboBox()
-            combo.addItems(available_types)
-            combo.setCurrentText(str(current_types.get(feature, 'unknown')))
-            self.table.setCellWidget(i, 2, combo)
-            self.type_combos[feature] = combo
+            feature_item = QTableWidgetItem(feature)
+            feature_item.setFlags(feature_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(i, 0, feature_item)
+            
+            # Type selector
+            type_combo = NavigableComboBox(items=available_types)
+            if feature in current_types:
+                type_combo.setCurrentText(current_types[feature])
+            self.type_combos[feature] = type_combo
+            self.table.setCellWidget(i, 1, type_combo)
         
+        # Adjust row heights and column widths
+        self.table.resizeColumnsToContents()
+        self.table.resizeRowsToContents()
+        
+        # Add table to layout
         layout.addWidget(self.table)
         
-        # Add buttons
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | 
-            QDialogButtonBox.StandardButton.Cancel
+        # Add dialog buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        
-        self.setStyleSheet("""
-            QDialog {
-                background-color: white;
-            }
-            QTableWidget {
-                gridline-color: #d0d0d0;
-                selection-background-color: #e0e0e0;
-            }
-            QTableWidget::item {
-                padding: 5px;
-            }
-            QHeaderView::section {
-                background-color: #f0f0f0;
-                padding: 5px;
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        button_box.setStyleSheet("""
+            QPushButton {
+                background-color: #1976D2;
+                color: white;
                 border: none;
-                border-bottom: 1px solid #d0d0d0;
+                padding: 6px 20px;
+                border-radius: 3px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #1565C0;
+            }
+            QPushButton:pressed {
+                background-color: #0D47A1;
             }
         """)
+        layout.addWidget(button_box)
     
     def get_type_mapping(self):
-        """Get the mapping of features to their new types."""
+        """Get the mapping of features to their selected types."""
         return {
             feature: combo.currentText()
             for feature, combo in self.type_combos.items()
@@ -1363,83 +1746,64 @@ class DimensionalityReductionWidget(PreprocessingNodeWidget):
     def __init__(self, parent=None):
         super().__init__("Dimensionality Reduction", parent)
         
-        # Add description
-        self.desc_label = QLabel(
-            "Reduce the number of features while preserving important patterns."
-        )
-        self.desc_label.setWordWrap(True)
-        self.desc_label.setStyleSheet("color: #666666; margin-bottom: 10px;")
-        self.layout.addWidget(self.desc_label)
-        
-        form_layout = QFormLayout()
-        form_layout.setSpacing(10)
+        # Create content layout with proper spacing
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(8, 4, 8, 8)
+        content_layout.setSpacing(8)
         
         # Method selector
-        self.method_combo = QComboBox()
-        self.method_combo.addItems(['PCA', 't-SNE'])
-        self.method_combo.setFixedWidth(120)
-        form_layout.addRow("Method:", self.method_combo)
+        self.method_combo = NavigableComboBox(
+            label="Method:",
+            items=['PCA', 'TSNE']
+        )
+        content_layout.addWidget(self.method_combo)
         
-        # Components selector
-        self.n_components_spin = QSpinBox()
-        self.n_components_spin.setRange(2, 100)
-        self.n_components_spin.setValue(2)
-        self.n_components_spin.setFixedWidth(80)
-        form_layout.addRow("Components:", self.n_components_spin)
+        # Parameters form
+        params_layout = QFormLayout()
+        params_layout.setSpacing(8)
+        params_layout.setContentsMargins(8, 4, 8, 8)
         
-        # t-SNE specific parameters
-        self.perplexity_spin = QSpinBox()
-        self.perplexity_spin.setRange(5, 50)
-        self.perplexity_spin.setValue(30)
-        self.perplexity_spin.setFixedWidth(80)
-        form_layout.addRow("Perplexity:", self.perplexity_spin)
+        # Number of components
+        self.n_components = QSpinBox()
+        self.n_components.setRange(2, 100)
+        self.n_components.setValue(2)
+        self.n_components.setFixedWidth(80)
+        self.n_components.setAlignment(Qt.AlignmentFlag.AlignRight)
+        params_layout.addRow("Components:", self.n_components)
         
-        self.iterations_spin = QSpinBox()
-        self.iterations_spin.setRange(250, 1000)
-        self.iterations_spin.setValue(300)
-        self.iterations_spin.setFixedWidth(80)
-        form_layout.addRow("Iterations:", self.iterations_spin)
+        content_layout.addLayout(params_layout)
         
-        # Add group box for better organization
-        for i in range(form_layout.rowCount()):
-            form_layout.itemAt(i, QFormLayout.ItemRole.FieldRole).widget().setFixedWidth(120)
+        # Add data info section
+        info_layout = QFormLayout()
+        info_layout.setSpacing(4)
+        info_layout.setContentsMargins(8, 8, 8, 4)
         
-        self.layout.addLayout(form_layout)
+        self.file_label = QLabel("No file loaded")
+        self.rows_label = QLabel("-")
+        self.columns_label = QLabel("-")
         
-        # Explained variance (for PCA)
-        self.variance_label = QLabel("-")
-        form_layout.addRow("Explained Variance:", self.variance_label)
+        info_layout.addRow("File:", self.file_label)
+        info_layout.addRow("Rows:", self.rows_label)
+        info_layout.addRow("Columns:", self.columns_label)
         
-        self.layout.addLayout(form_layout)
+        content_layout.addLayout(info_layout)
+        
+        # Add content layout to main layout
+        self.layout.insertLayout(1, content_layout)
         
         # Connect signals
-        self.method_combo.currentTextChanged.connect(self._on_params_changed)
-        self.n_components_spin.valueChanged.connect(self._on_params_changed)
-        self.perplexity_spin.valueChanged.connect(self._on_params_changed)
-        self.iterations_spin.valueChanged.connect(self._on_params_changed)
+        self.method_combo.value_changed.connect(self._emit_params)
+        self.n_components.valueChanged.connect(self._emit_params)
         
-        # Initial params update
-        self._on_params_changed()
+        # Set fixed height
+        self.setFixedHeight(250)
     
-    def _on_params_changed(self):
-        """Handle parameter changes."""
-        method = self.method_combo.currentText()
-        params = {
-            'method': method,
-            'n_components': self.n_components_spin.value()
-        }
-        
-        if method == 't-SNE':
-            params.update({
-                'perplexity': self.perplexity_spin.value(),
-                'n_iter': self.iterations_spin.value()
-            })
-        
-        self.params_changed.emit(params)
-    
-    def update_variance(self, variance: float):
-        """Update the explained variance label."""
-        self.variance_label.setText(f"{variance:.2%}")
+    def _emit_params(self):
+        """Emit parameters when they change."""
+        self.params_changed.emit({
+            'method': self.method_combo.currentText(),
+            'n_components': self.n_components.value()
+        })
 
 class DimensionalityReductionNode(PreprocessingNode):
     """Node for dimensionality reduction."""
